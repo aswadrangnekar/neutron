@@ -5,6 +5,7 @@ from sqlalchemy.sql import expression as expr
 from neutron.api.v2 import attributes
 from neutron.common import exceptions as n_exc
 from neutron.db import models_v2
+from neutron.i18n import _LE, _LI, _LW
 from neutron import manager
 from neutron.openstack.common import log as logging
 from neutron.plugins.cisco.db.l3.device_handling_db import DeviceHandlingMixin
@@ -159,8 +160,6 @@ class ML2OVSPluggingDriver(plug.PluginSidePluggingDriver):
             self._svc_vm_mgr.interface_attach(hosting_device_id, port_db['id'])
             LOG.debug(_("Setup logical port completed for port:%s"), port_db[
                 'id'])
-        except Exception, e:
-            LOG.error(_("Exception %s"), e)
         finally:
             # Set tenant_id, device_id and device_owner back to original
             self._core_plugin.update_port(
@@ -169,34 +168,64 @@ class ML2OVSPluggingDriver(plug.PluginSidePluggingDriver):
                 {'port': {'tenant_id': original_tenant_id,
                           'device_id': original_device_id,
                           'device_owner': original_device_owner}})
-
     def teardown_logical_port_connectivity(self, context, port_db,
                                            hosting_device_id):
-        """Removes connectivity for a logical port."""
-        # l3admin_tenant_id = DeviceHandlingMixin.l3_tenant_id()
-        # self._core_plugin.update_port(
-        #     context.elevated(),
-        #     port_db['id'],
-        #     {'port': {'tenant_id': l3admin_tenant_id,
-        #               'device_id': hosting_device_id,
-        #               'device_owner': 'compute:None'}})
-        # try:
-        #     dummy_port = self._setup_dummy_port_and_interface(
-        #         context, hosting_device_id)
-        #     self._svc_vm_mgr.vm_interface_list(hosting_device_id)
-        #     LOG.debug(_("Sleeping for 5 seconds"))
-        #     eventlet.sleep(5)
-        #     self._svc_vm_mgr.interface_detach(hosting_device_id, port_db['id'])
-        # LOG.debug(_("Done teardown logical port connectivity for port:%s"),
-        #           port_db['id'])
-        #     LOG.debug(_("Sleeping for 5 seconds"))
-        #     eventlet.sleep(5)
-        #     self._remove_dummy_port_and_interface(
-        #         context, dummy_port, hosting_device_id)
-        # except Exception, e:
-        #     LOG.error(_("Exception %s"), e)
+        """Removes connectivity for a logical port.
+
+        To avoid instability in the CSR image, we don't do anything now.
+        """
         LOG.debug(_("Done teardown logical port connectivity for port:%s"),
                   port_db['id'])
+
+    def teardown_logical_port_connectivity_remove_vif(self, context, port_db,
+                                           hosting_device_id):
+        """Removes connectivity for a logical port.
+
+        Unplugs the corresponding data interface from the CSR
+        """
+        l3admin_tenant_id = DeviceHandlingMixin.l3_tenant_id()
+        self._core_plugin.update_port(
+            context.elevated(),
+            port_db['id'],
+            {'port': {'tenant_id': l3admin_tenant_id,
+                      'device_id': hosting_device_id,
+                      'device_owner': 'compute:None'}})
+        try:
+            self._svc_vm_mgr.interface_detach(hosting_device_id, port_db['id'])
+            LOG.debug("Done teardown logical port connectivity for port:%s",
+                      port_db['id'])
+        except Exception as e:
+            LOG.error(_LE("Exception %s"), e)
+
+    def teardown_logical_port_connectivity_remove_vif_with_dummy(
+            self, context,port_db,hosting_device_id):
+        """Removes connectivity for a logical port.
+
+        Plug and unplug a dummy interface so that Nova updates its port
+        ownership fields.
+        """
+        l3admin_tenant_id = DeviceHandlingMixin.l3_tenant_id()
+        self._core_plugin.update_port(
+            context.elevated(),
+            port_db['id'],
+            {'port': {'tenant_id': l3admin_tenant_id,
+                      'device_id': hosting_device_id,
+                      'device_owner': 'compute:None'}})
+        try:
+            dummy_port = self._setup_dummy_port_and_interface(
+                context, hosting_device_id)
+            self._svc_vm_mgr.vm_interface_list(hosting_device_id)
+            LOG.debug(_("Sleeping for 5 seconds"))
+            eventlet.sleep(5)
+            self._svc_vm_mgr.interface_detach(hosting_device_id, port_db['id'])
+            LOG.debug(_("Done teardown logical port connectivity for port:%s"),
+                  port_db['id'])
+            LOG.debug("Sleeping for 5 seconds")
+            eventlet.sleep(5)
+            self._remove_dummy_port_and_interface(
+                context, dummy_port, hosting_device_id)
+        except Exception as e:
+            LOG.error(_LE("Exception %s"), e)
 
     def extend_hosting_port_info(self, context, port_db, hosting_info):
         """Extends hosting information for a logical port."""

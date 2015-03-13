@@ -322,3 +322,18 @@ class TestAllowedAddressPairs(AllowedAddressPairDBTestCase):
             port = self.deserialize(self.fmt, req.get_response(self.api))
             self.assertEqual(port['port'][addr_pair.ADDRESS_PAIRS], [])
             self._delete('ports', port['port']['id'])
+
+    def test_update_clear_routes_with_None(self):
+        with self.network() as net:
+            address_pairs = [{'mac_address': '00:00:00:00:00:01',
+                              'ip_address': '10.0.0.1'}]
+            res = self._create_port(self.fmt, net['network']['id'],
+                                    arg_list=(addr_pair.ADDRESS_PAIRS,),
+                                    allowed_address_pairs=address_pairs)
+            port = self.deserialize(self.fmt, res)
+            update_port = {'port': {addr_pair.ADDRESS_PAIRS: None}}
+            req = self.new_update_request('ports', update_port,
+                                          port['port']['id'])
+            port = self.deserialize(self.fmt, req.get_response(self.api))
+            self.assertEqual(port['port'][addr_pair.ADDRESS_PAIRS], [])
+            self._delete('ports', port['port']['id'])

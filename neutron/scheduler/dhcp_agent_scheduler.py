@@ -22,6 +22,7 @@ from oslo.config import cfg
 from neutron.common import constants
 from neutron.db import agents_db
 from neutron.db import agentschedulers_db
+from neutron.openstack.common.db import exception as db_exc
 from neutron.openstack.common import log as logging
 
 
@@ -34,15 +35,25 @@ class ChanceScheduler(object):
     can be introduced later.
     """
 
-    def _schedule_bind_network(self, context, agent, network_id):
-        binding = agentschedulers_db.NetworkDhcpAgentBinding()
-        binding.dhcp_agent = agent
-        binding.network_id = network_id
-        context.session.add(binding)
-        LOG.debug(_('Network %(network_id)s is scheduled to be hosted by '
-                    'DHCP agent %(agent_id)s'),
-                  {'network_id': network_id,
-                   'agent_id': agent})
+    def _schedule_bind_network(self, context, agents, network_id):
+        for agent in agents:
+            context.session.begin(subtransactions=True)
+            try:
+                binding = agentschedulers_db.NetworkDhcpAgentBinding()
+                binding.dhcp_agent = agent
+                binding.network_id = network_id
+                context.session.add(binding)
+                # try to actually write the changes and catch integrity
+                # DBDuplicateEntry
+                context.session.commit()
+            except db_exc.DBDuplicateEntry:
+                # it's totally ok, someone just did our job!
+                context.session.rollback()
+                LOG.info(_('Agent %s already present'), agent)
+            LOG.debug(_('Network %(network_id)s is scheduled to be hosted by '
+                        'DHCP agent %(agent_id)s'),
+                    {'network_id': network_id,
+                    'agent_id': agent})
 
     def schedule(self, plugin, context, network):
         """Schedule the network to active DHCP agent(s).
@@ -79,8 +90,7 @@ class ChanceScheduler(object):
                 return
             n_agents = min(len(active_dhcp_agents), n_agents)
             chosen_agents = random.sample(active_dhcp_agents, n_agents)
-            for agent in chosen_agents:
-                self._schedule_bind_network(context, agent, network['id'])
+        self._schedule_bind_network(context, chosen_agents, network['id'])
         return chosen_agents
 
     def auto_schedule_networks(self, plugin, context, host):
